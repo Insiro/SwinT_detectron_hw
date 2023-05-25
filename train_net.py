@@ -12,17 +12,25 @@ Therefore, we recommend you to use detectron2 as an library and take
 this file as an example of how to use the library.
 You may want to write your own script with your datasets and other customizations.
 """
+import gc
+from os import path
 import itertools
 import logging
 import os
 from collections import OrderedDict
 import torch
-
 import detectron2.utils.comm as comm
+from detectron2.data.datasets import register_coco_instances
 from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.config import get_cfg
 from detectron2.data import MetadataCatalog
-from detectron2.engine import DefaultTrainer, default_argument_parser, default_setup, hooks, launch
+from detectron2.engine import (
+    DefaultTrainer,
+    default_argument_parser,
+    default_setup,
+    hooks,
+    launch,
+)
 from detectron2.evaluation import (
     CityscapesInstanceEvaluator,
     CityscapesSemSegEvaluator,
@@ -35,9 +43,14 @@ from detectron2.evaluation import (
     verify_results,
 )
 from detectron2.modeling import GeneralizedRCNNWithTTA
-from detectron2.solver.build import maybe_add_gradient_clipping, get_default_optimizer_params
+from detectron2.solver.build import (
+    maybe_add_gradient_clipping,
+    get_default_optimizer_params,
+)
+from detectron2.engine.defaults import DefaultPredictor
 
 from swint import add_swint_config
+
 
 class Trainer(DefaultTrainer):
     """
@@ -59,6 +72,7 @@ class Trainer(DefaultTrainer):
             output_folder = os.path.join(cfg.OUTPUT_DIR, "inference")
         evaluator_list = []
         evaluator_type = MetadataCatalog.get(dataset_name).evaluator_type
+
         if evaluator_type in ["sem_seg", "coco_panoptic_seg"]:
             evaluator_list.append(
                 SemSegEvaluator(
@@ -125,11 +139,15 @@ class Trainer(DefaultTrainer):
             weight_decay_bias=cfg.SOLVER.WEIGHT_DECAY_BIAS,
             overrides={
                 "absolute_pos_embed": {"lr": cfg.SOLVER.BASE_LR, "weight_decay": 0.0},
-                "relative_position_bias_table": {"lr": cfg.SOLVER.BASE_LR, "weight_decay": 0.0},
-            }
+                "relative_position_bias_table": {
+                    "lr": cfg.SOLVER.BASE_LR,
+                    "weight_decay": 0.0,
+                },
+            },
         )
 
-        def maybe_add_full_model_gradient_clipping(optim):  # optim: the optimizer class
+        # optim: the optimizer class
+        def maybe_add_full_model_gradient_clipping(optim):
             # detectron2 doesn't have full model gradient clipping now
             clip_norm_val = cfg.SOLVER.CLIP_GRADIENTS.CLIP_VALUE
             enable = (
@@ -140,7 +158,9 @@ class Trainer(DefaultTrainer):
 
             class FullModelGradientClippingOptimizer(optim):
                 def step(self, closure=None):
-                    all_params = itertools.chain(*[x["params"] for x in self.param_groups])
+                    all_params = itertools.chain(
+                        *[x["params"] for x in self.param_groups]
+                    )
                     torch.nn.utils.clip_grad_norm_(all_params, clip_norm_val)
                     super().step(closure=closure)
 
@@ -149,13 +169,17 @@ class Trainer(DefaultTrainer):
         optimizer_type = cfg.SOLVER.OPTIMIZER
         if optimizer_type == "SGD":
             optimizer = maybe_add_gradient_clipping(torch.optim.SGD)(
-                params, cfg.SOLVER.BASE_LR, momentum=cfg.SOLVER.MOMENTUM,
+                params,
+                cfg.SOLVER.BASE_LR,
+                momentum=cfg.SOLVER.MOMENTUM,
                 nesterov=cfg.SOLVER.NESTEROV,
                 weight_decay=cfg.SOLVER.WEIGHT_DECAY,
             )
         elif optimizer_type == "AdamW":
             optimizer = maybe_add_full_model_gradient_clipping(torch.optim.AdamW)(
-                params, cfg.SOLVER.BASE_LR, betas=(0.9, 0.999),
+                params,
+                cfg.SOLVER.BASE_LR,
+                betas=(0.9, 0.999),
                 weight_decay=cfg.SOLVER.WEIGHT_DECAY,
             )
         else:
@@ -184,6 +208,7 @@ def main(args):
         DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR).resume_or_load(
             cfg.MODEL.WEIGHTS, resume=args.resume
         )
+
         res = Trainer.test(cfg, model)
         if cfg.TEST.AUG.ENABLED:
             res.update(Trainer.test_with_TTA(cfg, model))
@@ -205,8 +230,36 @@ def main(args):
     return trainer.train()
 
 
+import platform
+
+
+class PathLoader:
+    def __init__(self) -> None:
+        self.system = platform.system()
+
+    def convert(self, dir: str):
+        if self.system == "Linux":
+            dir = dir.replace("\\", "/")
+            dirs = dir.split(":/")
+            dir = f"/mnt/{dirs[0].lower()}/{dirs[1]}" if len(dirs) == 2 else dir
+            return dir
+        return dir
+
+
 if __name__ == "__main__":
     args = default_argument_parser().parse_args()
+    # args.config_file = './configs/SwinT/mask_rcnn_swint_T_FPN_3x.yaml'
+    config1 = "./configs/SwinT/retinanet_swint_T_FPN_3x_.yaml"
+    config2 = "./configs/Base-RetinaNet.yaml"
+    paths = PathLoader()
+    args.config_file = config1
+    register_coco_instances(
+        "drawing",
+        {},
+        paths.convert("/media/young/backup/sunghoon/dataset/coco.json"),
+        paths.convert("/media/young/backup/sunghoon/dataset"),
+    )
+
     print("Command Line Args:", args)
     launch(
         main,

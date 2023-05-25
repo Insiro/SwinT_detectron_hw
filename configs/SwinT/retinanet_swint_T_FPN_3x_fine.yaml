@@ -1,6 +1,6 @@
 _BASE_: "../Base-RetinaNet.yaml"
 MODEL:
-    WEIGHTS: "output1/model_final.pth"
+    WEIGHTS: "model_0229999.pth"
     RESNETS:
         DEPTH: 50
     BACKBONE:
@@ -10,8 +10,8 @@ MODEL:
     FPN:
         IN_FEATURES: ["stage3", "stage4", "stage5"]
 SOLVER:
-    STEPS: (30000, 50000)
-    MAX_ITER: 1
+    STEPS: (3000, 5000)
+    MAX_ITER: 10000
     WEIGHT_DECAY: 0.05
     BASE_LR: 0.0001
     IMS_PER_BATCH: 3
